@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N体問題 重力軌道 Canvas</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-black text-white min-h-screen">
+<div class="max-w-4xl mx-auto p-4">
+  <h1 class="text-2xl font-bold text-center mb-2 text-yellow-300">☄️ N体問題 重力軌道シミュレーション</h1>
+  <p class="text-center text-gray-400 mb-4 text-sm">N-Body Gravitational Orbit Simulation</p>
+
+  <div class="flex gap-4">
+    <div class="flex-1">
+      <canvas id="mainCanvas" width="600" height="500"
+        class="rounded-xl border border-yellow-900 w-full cursor-pointer"
+        style="max-width:600px;background:#000010"></canvas>
+      <div id="energyInfo" class="text-xs text-center text-gray-400 mt-1"></div>
+    </div>
+
+    <div class="w-56 space-y-3">
+      <!-- Presets -->
+      <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+        <label class="block text-xs font-bold text-yellow-300 mb-2">プリセット軌道</label>
+        <div class="space-y-1">
+          <button data-preset="figure8" aria-label="8の字3体軌道" class="preset-btn w-full text-left text-xs px-2 py-2 rounded bg-yellow-900 hover:bg-yellow-800 transition">
+            ∞ 8の字 3体軌道
+          </button>
+          <button data-preset="binary" aria-label="2体円軌道" class="preset-btn w-full text-left text-xs px-2 py-2 rounded bg-gray-800 hover:bg-gray-700 transition">
+            ⚫⚫ 2体円軌道
+          </button>
+          <button data-preset="solar" aria-label="太陽系モデル" class="preset-btn w-full text-left text-xs px-2 py-2 rounded bg-gray-800 hover:bg-gray-700 transition">
+            ☀️ 太陽系モデル
+          </button>
+          <button data-preset="square4" aria-label="4体方形軌道" class="preset-btn w-full text-left text-xs px-2 py-2 rounded bg-gray-800 hover:bg-gray-700 transition">
+            ◼ 4体方形
+          </button>
+          <button data-preset="random" aria-label="ランダムN体" class="preset-btn w-full text-left text-xs px-2 py-2 rounded bg-gray-800 hover:bg-gray-700 transition">
+            🎲 ランダム 8体
+          </button>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+        <label class="block text-xs font-bold text-yellow-300 mb-2">コントロール</label>
+        <div class="flex gap-2 mb-2">
+          <button id="playPauseBtn" aria-label="再生/一時停止" class="flex-1 bg-green-800 hover:bg-green-700 text-white text-xs font-bold py-2 rounded transition">
+            ■ 停止
+          </button>
+          <button id="resetBtn" aria-label="リセット" class="px-3 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-2 rounded transition">
+            ↺
+          </button>
+        </div>
+        <div class="mb-2">
+          <label class="text-xs text-gray-400 block mb-1" for="speedSlider">速度: <span id="speedVal">1.0</span>x</label>
+          <input type="range" id="speedSlider" aria-label="シミュレーション速度" min="0.1" max="5" step="0.1" value="1" class="w-full accent-yellow-500">
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1" for="trailSlider">軌跡長: <span id="trailVal">150</span></label>
+          <input type="range" id="trailSlider" aria-label="軌跡の長さ" min="20" max="500" step="10" value="150" class="w-full accent-yellow-500">
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+        <div class="text-xs font-bold text-yellow-300 mb-2">統計</div>
+        <div id="bodyList" class="text-xs text-gray-400 space-y-1 max-h-40 overflow-y-auto"></div>
+      </div>
+
+      <div class="bg-gray-900 rounded-xl p-3 border border-gray-800">
+        <div class="text-xs text-gray-500">クリックで天体情報表示</div>
+        <div id="clickInfo" class="text-xs text-yellow-200 mt-1"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const CX = W / 2, CY = H / 2;
+
+const G = 1;
+let bodies = [];
+let running = true;
+let speed = 1.0;
+let trailLen = 150;
+let animId = null;
+let lastEnergy0 = null;
+
+class Body {
+  constructor(x, y, vx, vy, mass, color) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.mass = mass;
+    this.color = color;
+    this.trail = [];
+    this.ax = 0; this.ay = 0;
+  }
+}
+
+const PRESETS = {
+  figure8: () => {
+    // Chenciner & Montgomery figure-8
+    const scale = 120;
+    const v = 0.93240737;
+    const b = [
+      new Body(-0.97000436 * scale + CX, 0.24308753 * scale + CY, v * scale * 0.01, 0.93240737 * scale * 0.01, 1.0, '#ff6b6b'),
+      new Body(0.97000436 * scale + CX, -0.24308753 * scale + CY, v * scale * 0.01, 0.93240737 * scale * 0.01, 1.0, '#4ecdc4'),
+      new Body(0 + CX, 0 + CY, -2 * v * scale * 0.01, -2 * 0.93240737 * scale * 0.01, 1.0, '#ffe66d'),
+    ];
+    // Corrected figure-8 initial conditions
+    const c1 = new Body(CX - 97, CY + 24, 0.93 * 0.8, 0.86 * 0.8, 1.0, '#ff6b6b');
+    const c2 = new Body(CX + 97, CY - 24, 0.93 * 0.8, 0.86 * 0.8, 1.0, '#4ecdc4');
+    const c3 = new Body(CX, CY, -1.86 * 0.8, -1.72 * 0.8, 1.0, '#ffe66d');
+    return [c1, c2, c3];
+  },
+  binary: () => [
+    new Body(CX - 100, CY, 0, -1.4, 1.0, '#f9d71c'),
+    new Body(CX + 100, CY, 0, 1.4, 1.0, '#6db6ff'),
+  ],
+  solar: () => [
+    new Body(CX, CY, 0, 0, 20.0, '#ffdd00'),
+    new Body(CX + 80, CY, 0, 1.58, 0.05, '#a0a0ff'),
+    new Body(CX + 130, CY, 0, 1.24, 0.1, '#88ff88'),
+    new Body(CX + 200, CY, 0, 1.0, 0.08, '#ff8866'),
+    new Body(CX + 280, CY, 0, 0.84, 0.3, '#ffcc88'),
+  ],
+  square4: () => {
+    const d = 120;
+    const v = Math.sqrt(G * 1 / (2 * d * Math.sqrt(2))) * 10;
+    return [
+      new Body(CX - d, CY - d, v, -v, 1.0, '#ff6b6b'),
+      new Body(CX + d, CY - d, v, v, 1.0, '#4ecdc4'),
+      new Body(CX + d, CY + d, -v, v, 1.0, '#ffe66d'),
+      new Body(CX - d, CY + d, -v, -v, 1.0, '#a29bfe'),
+    ];
+  },
+  random: () => {
+    const colors = ['#ff6b6b','#4ecdc4','#ffe66d','#a29bfe','#fd79a8','#74b9ff','#55efc4','#fdcb6e'];
+    return Array.from({length: 8}, (_, i) => new Body(
+      CX + (Math.random() - 0.5) * 300,
+      CY + (Math.random() - 0.5) * 250,
+      (Math.random() - 0.5) * 2,
+      (Math.random() - 0.5) * 2,
+      0.5 + Math.random() * 1.5,
+      colors[i % colors.length]
+    ));
+  }
+};
+
+function loadPreset(name) {
+  bodies = PRESETS[name]();
+  lastEnergy0 = null;
+}
+
+loadPreset('figure8');
+
+function computeForces() {
+  bodies.forEach(b => { b.ax = 0; b.ay = 0; });
+  for (let i = 0; i < bodies.length; i++) {
+    for (let j = i + 1; j < bodies.length; j++) {
+      const dx = bodies[j].x - bodies[i].x;
+      const dy = bodies[j].y - bodies[i].y;
+      const r2 = dx * dx + dy * dy + 0.01;
+      const r = Math.sqrt(r2);
+      const f = G * bodies[i].mass * bodies[j].mass / r2;
+      const fx = f * dx / r, fy = f * dy / r;
+      bodies[i].ax += fx / bodies[i].mass;
+      bodies[i].ay += fy / bodies[i].mass;
+      bodies[j].ax -= fx / bodies[j].mass;
+      bodies[j].ay -= fy / bodies[j].mass;
+    }
+  }
+}
+
+function integrate(dt) {
+  // Leapfrog / Verlet
+  computeForces();
+  bodies.forEach(b => {
+    b.vx += b.ax * dt;
+    b.vy += b.ay * dt;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.trail.push({ x: b.x, y: b.y });
+    if (b.trail.length > trailLen) b.trail.shift();
+  });
+}
+
+function totalEnergy() {
+  let ke = 0, pe = 0;
+  bodies.forEach(b => { ke += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy); });
+  for (let i = 0; i < bodies.length; i++) {
+    for (let j = i + 1; j < bodies.length; j++) {
+      const dx = bodies[j].x - bodies[i].x, dy = bodies[j].y - bodies[i].y;
+      const r = Math.sqrt(dx * dx + dy * dy + 0.01);
+      pe -= G * bodies[i].mass * bodies[j].mass / r;
+    }
+  }
+  return ke + pe;
+}
+
+function draw() {
+  ctx.fillStyle = 'rgba(0,0,16,0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  bodies.forEach(b => {
+    if (b.trail.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(b.trail[0].x, b.trail[0].y);
+    b.trail.forEach((pt, i) => {
+      ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.strokeStyle = b.color + '88';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Body circle
+    const r = Math.max(2, Math.min(12, b.mass * 5));
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = b.color;
+    ctx.fill();
+    // Glow
+    const grad = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, r * 3);
+    grad.addColorStop(0, b.color + '66');
+    grad.addColorStop(1, 'transparent');
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r * 3, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  });
+
+  // Energy conservation display
+  const E = totalEnergy();
+  if (lastEnergy0 === null) lastEnergy0 = E;
+  const drift = lastEnergy0 !== 0 ? ((E - lastEnergy0) / Math.abs(lastEnergy0) * 100).toFixed(2) : '0.00';
+  document.getElementById('energyInfo').textContent =
+    `全エネルギー: ${E.toFixed(3)} | 初期比ドリフト: ${drift}%`;
+
+  // Body list
+  const bl = document.getElementById('bodyList');
+  bl.innerHTML = bodies.map((b, i) =>
+    `<div style="color:${b.color}">⚫ 体${i + 1}: m=${b.mass.toFixed(1)} v=${Math.sqrt(b.vx**2+b.vy**2).toFixed(2)}</div>`
+  ).join('');
+}
+
+let dt = 0.5;
+function loop() {
+  if (running) {
+    const steps = Math.max(1, Math.round(speed * 2));
+    for (let i = 0; i < steps; i++) integrate(dt * speed);
+  }
+  draw();
+  animId = requestAnimationFrame(loop);
+}
+loop();
+
+// Controls
+document.getElementById('playPauseBtn').addEventListener('click', () => {
+  running = !running;
+  document.getElementById('playPauseBtn').textContent = running ? '■ 停止' : '▶ 再生';
+  document.getElementById('playPauseBtn').className = running
+    ? 'flex-1 bg-green-800 hover:bg-green-700 text-white text-xs font-bold py-2 rounded transition'
+    : 'flex-1 bg-blue-800 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded transition';
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  // Reload current preset
+  const active = document.querySelector('.preset-btn.bg-yellow-900');
+  if (active) loadPreset(active.dataset.preset);
+});
+
+document.getElementById('speedSlider').addEventListener('input', e => {
+  speed = parseFloat(e.target.value);
+  document.getElementById('speedVal').textContent = speed.toFixed(1);
+});
+
+document.getElementById('trailSlider').addEventListener('input', e => {
+  trailLen = parseInt(e.target.value);
+  document.getElementById('trailVal').textContent = trailLen;
+});
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('bg-yellow-900'));
+    btn.classList.add('bg-yellow-900');
+    loadPreset(btn.dataset.preset);
+  });
+});
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * canvas.width / rect.width;
+  const y = (e.clientY - rect.top) * canvas.height / rect.height;
+  let nearest = null, nearestD = 400;
+  bodies.forEach((b, i) => {
+    const d = Math.sqrt((b.x - x) ** 2 + (b.y - y) ** 2);
+    if (d < nearestD) { nearest = i; nearestD = d; }
+  });
+  if (nearest !== null) {
+    const b = bodies[nearest];
+    document.getElementById('clickInfo').innerHTML =
+      `天体 #${nearest + 1}<br>位置: (${(b.x - CX).toFixed(0)}, ${(b.y - CY).toFixed(0)})<br>速度: (${b.vx.toFixed(2)}, ${b.vy.toFixed(2)})<br>質量: ${b.mass.toFixed(2)}`;
+  }
+});
+
+// LocalStorage: persist last used preset and speed
+function saveSettings() {
+  const activePreset = document.querySelector('.preset-btn.bg-yellow-900');
+  localStorage.setItem('nbody_preset', activePreset ? activePreset.dataset.preset : 'figure8');
+  localStorage.setItem('nbody_speed', speed);
+}
+function loadSettings() {
+  const savedPreset = localStorage.getItem('nbody_preset');
+  const savedSpeed = localStorage.getItem('nbody_speed');
+  if (savedSpeed) {
+    speed = parseFloat(savedSpeed);
+    document.getElementById('speedSlider').value = speed;
+    document.getElementById('speedVal').textContent = speed.toFixed(1);
+  }
+  if (savedPreset) {
+    const btn = document.querySelector(`[data-preset="${savedPreset}"]`);
+    if (btn) {
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('bg-yellow-900'));
+      btn.classList.add('bg-yellow-900');
+      loadPreset(savedPreset);
+    }
+  }
+}
+loadSettings();
+setInterval(saveSettings, 5000);
+</script>
+</body>
+</html>
